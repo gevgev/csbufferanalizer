@@ -75,11 +75,6 @@ func usage() {
 	os.Exit(-1)
 }
 
-// will be getting all *.raw files to process
-func getFiles() []string {
-	return []string{"2016-04-01_00h00m_60_Click-Tacoma copy 2.raw"}
-}
-
 func convertToTime(timestampS string) time.Time {
 	timestamp, err := strconv.ParseInt(timestampS, 16, 64)
 	//fmt.Println(timestampS, timestamp)
@@ -99,9 +94,9 @@ func convertToTime(timestampS string) time.Time {
 // just extract timestamp, device Id, and calculate event size
 func parseEvent(line string) (timestamp time.Time, deviceId string, eventSize int, err error) {
 	defer func() {
-		if r:= recover(); r !=nil {
+		if r := recover(); r != nil {
 			timestamp = time.Now()
-			err = errors.New("Wrong line format")
+			err = errors.New("Parser time exception")
 		}
 	}()
 
@@ -113,34 +108,46 @@ func parseEvent(line string) (timestamp time.Time, deviceId string, eventSize in
 	deviceId = tokens[0]
 	clickString := tokens[1]
 	timestamp = convertToTime(clickString[2:10])
-	eventSize = len(clickString)
+	eventSize = len(clickString)/2
 	err = nil
+
+	if timestamp.After(time.Now()) {
+		err = errors.New("Wrong date: " + timestamp.String())
+	}
 	return
 }
 
 type ErrorLogEntry struct {
 	fileName string
-	lineNo	 int
+	lineNo   int
 	line     string
+	err      error
 }
 
 var errorsLog []ErrorLogEntry = []ErrorLogEntry{}
 
-func logErrorEvent(fileName, line string, lineNo int) {
+func logErrorEvent(fileName, line string, lineNo int, err error) {
 	entry := ErrorLogEntry{
 		fileName,
 		lineNo,
 		line,
+		err,
 	}
 	errorsLog = append(errorsLog, entry)
 }
 
 func printErrorLogs() {
-	fmt.Println("-----------------------------------------")
-	for _, logEntry := range errorsLog {
-		fmt.Printf("File: %s \t lineNo: %d\nEntry:[%s]\n", logEntry.fileName, logEntry.lineNo, logEntry.line)
+	file, err := os.Create("errorlog.txt")
+	if err != nil {
+		fmt.Println(err)
 	}
-	fmt.Println("-----------------------------------------")
+	w := bufio.NewWriter(file)
+	for _, logEntry := range errorsLog {
+		fmt.Fprintf(w, "File: %s \t lineNo: %d\t Error:%s\nEntry:[%s]\n",
+			logEntry.fileName, logEntry.lineNo, logEntry.err, logEntry.line)
+	}
+	w.Flush()
+	file.Close()
 }
 
 // Single Clickstream package "sending"
@@ -201,6 +208,7 @@ func main() {
 
 	files := getFilesToProcess() //getFiles()
 
+	totalEvents := 0
 	// BufferSizes for devices
 	bufferSize := make(map[string]int)
 
@@ -221,30 +229,35 @@ func main() {
 			lineNo++
 			timestamp, deviceId, eventSize, err := parseEvent(line)
 			if err != nil {
-				logErrorEvent(fileName, line, lineNo)
+				logErrorEvent(fileName, line, lineNo, err)
 			} else {
 				if bufferSize[deviceId]+eventSize > BuffWaterMarkSize {
 					pkg := Pack(timestamp, deviceId)
+					// Send a new package
 					packages = append(packages, pkg)
 					if diagnostics {
 						fmt.Println("Sent package: ", pkg)
 					}
-					bufferSize[deviceId] = 0
+					// Start the buffer from the beginning
+					bufferSize[deviceId] = eventSize
 				} else {
 					bufferSize[deviceId] += eventSize
 				}
 			}
 
 		}
+		totalEvents += lineNo
 		file.Close()
 	}
 
 	printOutputFile(packages)
 	printErrorLogs()
-	fmt.Println("Number of devices: ", len(bufferSize))
-	fmt.Println("Number of packages sent: ", len(packages))
+	fmt.Println("Number of devices:\t", len(bufferSize))
+	fmt.Println("Total events: \t\t", totalEvents)
+	fmt.Println("Total packages:\t\t", len(packages))
 	fmt.Println("First package sent at: ", packages[0].timestamp)
 	fmt.Println("Last  package sent at: ", packages[len(packages)-1].timestamp)
+	fmt.Println("Error entries number: ", len(errorsLog))
 	fmt.Printf("Processed %d files in %v\n", len(files), time.Since(startTime))
 }
 
