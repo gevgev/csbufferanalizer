@@ -98,6 +98,13 @@ func convertToTime(timestampS string) time.Time {
 
 // just extract timestamp, device Id, and calculate event size
 func parseEvent(line string) (timestamp time.Time, deviceId string, eventSize int, err error) {
+	defer func() {
+		if r:= recover(); r !=nil {
+			timestamp = time.Now()
+			err = errors.New("Wrong line format")
+		}
+	}()
+
 	tokens := strings.Split(line, " ")
 	if len(tokens) != 2 {
 		return time.Now(), "", 0, errors.New("Wrong line format")
@@ -113,14 +120,16 @@ func parseEvent(line string) (timestamp time.Time, deviceId string, eventSize in
 
 type ErrorLogEntry struct {
 	fileName string
+	lineNo	 int
 	line     string
 }
 
 var errorsLog []ErrorLogEntry = []ErrorLogEntry{}
 
-func logErrorEvent(fileName, line string) {
+func logErrorEvent(fileName, line string, lineNo int) {
 	entry := ErrorLogEntry{
 		fileName,
+		lineNo,
 		line,
 	}
 	errorsLog = append(errorsLog, entry)
@@ -129,7 +138,7 @@ func logErrorEvent(fileName, line string) {
 func printErrorLogs() {
 	fmt.Println("-----------------------------------------")
 	for _, logEntry := range errorsLog {
-		fmt.Println("File: %s \t entry: %s", logEntry.fileName, logEntry.line)
+		fmt.Printf("File: %s \t lineNo: %d\nEntry:[%s]\n", logEntry.fileName, logEntry.lineNo, logEntry.line)
 	}
 	fmt.Println("-----------------------------------------")
 }
@@ -187,6 +196,7 @@ func printOutputFile(packages PackageList) {
 }
 
 func main() {
+	startTime := time.Now()
 	packages := []Package{}
 
 	files := getFilesToProcess() //getFiles()
@@ -205,12 +215,13 @@ func main() {
 		}
 
 		scanner := bufio.NewScanner(file)
-
+		lineNo := 0
 		for scanner.Scan() {
 			line := scanner.Text()
+			lineNo++
 			timestamp, deviceId, eventSize, err := parseEvent(line)
 			if err != nil {
-				logErrorEvent(fileName, line)
+				logErrorEvent(fileName, line, lineNo)
 			} else {
 				if bufferSize[deviceId]+eventSize > BuffWaterMarkSize {
 					pkg := Pack(timestamp, deviceId)
@@ -230,6 +241,11 @@ func main() {
 
 	printOutputFile(packages)
 	printErrorLogs()
+	fmt.Println("Number of devices: ", len(bufferSize))
+	fmt.Println("Number of packages sent: ", len(packages))
+	fmt.Println("First package sent at: ", packages[0].timestamp)
+	fmt.Println("Last  package sent at: ", packages[len(packages)-1].timestamp)
+	fmt.Printf("Processed %d files in %v\n", len(files), time.Since(startTime))
 }
 
 // Get the list of files to process in the target folder
