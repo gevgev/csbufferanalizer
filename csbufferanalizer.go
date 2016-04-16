@@ -108,7 +108,7 @@ func parseEvent(line string) (timestamp time.Time, deviceId string, eventSize in
 	deviceId = tokens[0]
 	clickString := tokens[1]
 	timestamp = convertToTime(clickString[2:10])
-	eventSize = len(clickString)/2
+	eventSize = len(clickString) / 2
 	err = nil
 
 	if timestamp.After(time.Now()) {
@@ -251,6 +251,7 @@ func main() {
 	}
 
 	printOutputFile(packages)
+	max, avg, total := printEventsPerSecond(packages)
 	printErrorLogs()
 	fmt.Println("Number of devices:\t", len(bufferSize))
 	fmt.Println("Total events: \t\t", totalEvents)
@@ -258,7 +259,74 @@ func main() {
 	fmt.Println("First package sent at: ", packages[0].timestamp)
 	fmt.Println("Last  package sent at: ", packages[len(packages)-1].timestamp)
 	fmt.Println("Error entries number: ", len(errorsLog))
+	fmt.Println("Total reported at times: ", total)
+	fmt.Printf("Max per second: %d at %v", max.numberOfEvents, max.timestamp)
+	fmt.Println("Average per second: ", avg)
 	fmt.Printf("Processed %d files in %v\n", len(files), time.Since(startTime))
+}
+
+// Single Clickstream package "sending"
+type TimepointType struct {
+	timestamp      time.Time
+	numberOfEvents int
+}
+
+func (tp TimepointType) String() string {
+	return fmt.Sprintf("%v, %s", tp.timestamp, tp.numberOfEvents)
+}
+
+type TimepointTypeList []TimepointType
+
+func (list TimepointTypeList) Len() int {
+	return len(list)
+}
+
+func (list TimepointTypeList) Swap(i, j int) {
+	list[i], list[j] = list[j], list[i]
+}
+
+func (list TimepointTypeList) Less(i, j int) bool {
+	return list[i].timestamp.Before(list[j].timestamp)
+}
+
+func printEventsPerSecond(packages PackageList) (max TimepointType, avg int, total int) {
+	eventsPerSecond := make(map[time.Time]int)
+
+	for _, pkg := range packages {
+		if _, ok := eventsPerSecond[pkg.timestamp]; ok {
+			eventsPerSecond[pkg.timestamp]++
+		} else {
+			eventsPerSecond[pkg.timestamp] = 1
+		}
+	}
+
+	var orderedEventsPerSecond TimepointTypeList
+	for k, v := range eventsPerSecond {
+		orderedEventsPerSecond = append(orderedEventsPerSecond, TimepointType{k, v})
+	}
+
+	sort.Sort(orderedEventsPerSecond)
+
+	file, err := os.Create("eventsPerSecond.csv")
+	if err != nil {
+		fmt.Println(err)
+	}
+	w := bufio.NewWriter(file)
+	for _, points := range orderedEventsPerSecond {
+		fmt.Fprintf(w, "%v, %d\n", points.timestamp, points.numberOfEvents)
+		if points.numberOfEvents > max.numberOfEvents {
+			max = points
+		}
+
+		avg += max.numberOfEvents
+	}
+	w.Flush()
+	file.Close()
+
+	avg = avg / len(orderedEventsPerSecond)
+	total = len(orderedEventsPerSecond)
+
+	return
 }
 
 // Get the list of files to process in the target folder
