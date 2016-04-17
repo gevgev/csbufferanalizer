@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"math/rand"
 	"sort"
 	"strconv"
 	"strings"
@@ -204,6 +205,8 @@ func printOutputFile(packages PackageList) {
 
 func main() {
 	startTime := time.Now()
+	rand.Seed(int64(startTime.Second()))
+
 	packages := []Package{}
 
 	files := getFilesToProcess() //getFiles()
@@ -231,6 +234,10 @@ func main() {
 			if err != nil {
 				logErrorEvent(fileName, line, lineNo, err)
 			} else {
+				if _, ok := bufferSize[deviceId]; !ok {
+					// First occurence
+					bufferSize[deviceId] = rand.Intn(BuffWaterMarkSize)
+				}
 				if bufferSize[deviceId]+eventSize > BuffWaterMarkSize {
 					pkg := Pack(timestamp, deviceId)
 					// Send a new package
@@ -260,7 +267,7 @@ func main() {
 	fmt.Println("Last  package sent at: ", packages[len(packages)-1].timestamp)
 	fmt.Println("Error entries number: ", len(errorsLog))
 	fmt.Println("Total reported at times: ", total)
-	fmt.Printf("Max per second: %d at %v", max.numberOfEvents, max.timestamp)
+	fmt.Printf("Max per second: %d at %v\n", max.numberOfEvents, max.timestamp)
 	fmt.Println("Average per second: ", avg)
 	fmt.Printf("Processed %d files in %v\n", len(files), time.Since(startTime))
 }
