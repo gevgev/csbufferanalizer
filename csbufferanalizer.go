@@ -2,12 +2,13 @@ package main
 
 import (
 	"bufio"
+	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
+	"math/rand"
 	"os"
 	"path/filepath"
-	"math/rand"
 	"sort"
 	"strconv"
 	"strings"
@@ -23,6 +24,7 @@ var (
 	outputFileName string
 	concurrency    int
 	verbose        bool
+	supress        bool
 	singleFileMode bool
 	appName        string
 )
@@ -45,6 +47,7 @@ func init() {
 	flagOutputFile := flag.String("o", "output", "`Output filename`")
 	flagConcurrency := flag.Int("c", 100, "The number of files to process `concurrent`ly")
 	flagVerbose := flag.Bool("v", false, "`Verbose`: outputs to the screen")
+	flagSupress2am := flag.Bool("S", false, "`Supress`: 2am-3am diagnostics messages")
 
 	flag.Parse()
 	if flag.Parsed() {
@@ -56,6 +59,7 @@ func init() {
 		outputFileName = *flagOutputFile
 		concurrency = *flagConcurrency
 		verbose = *flagVerbose
+		supress = *flagSupress2am
 		appName = os.Args[0]
 		if inFileName == "" && dirName == "" && len(os.Args) == 2 {
 			inFileName = os.Args[1]
@@ -63,7 +67,7 @@ func init() {
 	} else {
 		usage()
 	}
-
+	initEventNames()
 }
 
 func usage() {
@@ -92,8 +96,75 @@ func convertToTime(timestampS string) time.Time {
 	return time.Time{}
 }
 
+type Command struct {
+	cmd        string
+	name       string
+	diagnostic bool
+}
+
+var commandsList = []Command{
+	{"41", "`A`Ad Display", false},
+	{"42", "`B`Button Config", true},
+	{"43", "`C`Channel Change (verbose)", false},
+	{"63", "`c`Channel Change (brief)", false},
+	{"45", "`E`Program Event", false},
+	{"46", "`F`Favorite", false},
+	{"47", "`G`VOD Category", false},
+	{"48", "`H`Highlight", false},
+	{"49", "`I`Info Screen", false},
+	{"4B", "`K`Key Press", false},
+	{"4C", "`L`Lock", false},
+	{"4D", "`M`Missing", false},
+	{"4F", "`O`Option", false},
+	{"50", "`P`Pulse", false},
+	{"52", "`R`Reset", false},
+	{"53", "`S`State Change", false},
+	{"54", "`T`Turbo Key", false},
+	{"55", "`U`Unit Ident.", true},
+	{"56", "`V`Video Playback Session (non- OCAP)", false},
+	{"58", "`X`Status", true},
+	{"5A", "`Z`Menu Config.", true},
+}
+
+var (
+	eventNames       map[string]string
+	diagnosticEvents map[string]bool
+)
+
+func initEventNames() {
+	eventNames = make(map[string]string, len(commandsList))
+	diagnosticEvents = make(map[string]bool, 4)
+	for _, cmd := range commandsList {
+		eventNames[cmd.cmd] = cmd.name
+		if cmd.diagnostic {
+			diagnosticEvents[cmd.name] = cmd.diagnostic
+		}
+	}
+}
+
+func isDiagnosticEvent(cmd string) bool {
+	_, ok := diagnosticEvents[cmd]
+	return ok
+}
+
+func convertToString(str string) string {
+	bytes, err := hex.DecodeString(str)
+	if err == nil {
+		return string(bytes)
+	}
+	return ""
+}
+
+func convertToLogName(cmd string) (string, error) {
+	cmdStr, ok := eventNames[cmd]
+	if !ok {
+		return "", errors.New("Unknown Clickstream Code")
+	}
+	return cmdStr, nil
+}
+
 // just extract timestamp, device Id, and calculate event size
-func parseEvent(line string) (timestamp time.Time, deviceId string, eventSize int, err error) {
+func parseEvent(line string) (timestamp time.Time, deviceId string, eventSize int, eventCode string, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			timestamp = time.Now()
@@ -103,14 +174,26 @@ func parseEvent(line string) (timestamp time.Time, deviceId string, eventSize in
 
 	tokens := strings.Split(line, " ")
 	if len(tokens) != 2 {
-		return time.Now(), "", 0, errors.New("Wrong line format")
+		if diagnostics {
+			fmt.Println("Tokens were too many:", tokens)
+		}
+		return time.Now(), "", 0, "", errors.New("Wrong line format")
 	}
 
 	deviceId = tokens[0]
 	clickString := tokens[1]
+	eventCode, err = convertToLogName(clickString[0:2])
+	if err != nil {
+		return
+	}
 	timestamp = convertToTime(clickString[2:10])
 	eventSize = len(clickString) / 2
 	err = nil
+
+	if diagnostics {
+		fmt.Printf("STB Id: %s \t eventCode: %s\t timeStamp: %v \t eventSize: %d\n",
+			deviceId, eventCode, timestamp, eventSize)
+	}
 
 	if timestamp.After(time.Now()) {
 		err = errors.New("Wrong date: " + timestamp.String())
@@ -155,10 +238,11 @@ func printErrorLogs() {
 type Package struct {
 	timestamp time.Time
 	deviceId  string
+	eventCode string
 }
 
 func (pkg Package) String() string {
-	return fmt.Sprintf("%v, %s", pkg.timestamp, pkg.deviceId)
+	return fmt.Sprintf("%v, %s, %s", pkg.timestamp, pkg.deviceId, pkg.eventCode)
 }
 
 type PackageList []Package
@@ -176,11 +260,12 @@ func (list PackageList) Less(i, j int) bool {
 }
 
 // Emulate sending of one Clickstream Package
-func Pack(timestamp time.Time, deviceId string) Package {
+func Pack(timestamp time.Time, deviceId, eventCode string) Package {
 	pkg := Package{}
 
 	pkg.deviceId = deviceId
 	pkg.timestamp = timestamp
+	pkg.eventCode = eventCode
 
 	if diagnostics {
 		fmt.Println(pkg)
@@ -230,7 +315,15 @@ func main() {
 		for scanner.Scan() {
 			line := scanner.Text()
 			lineNo++
-			timestamp, deviceId, eventSize, err := parseEvent(line)
+			if diagnostics {
+				fmt.Println("Got next line: ", line)
+			}
+			timestamp, deviceId, eventSize, eventCode, err := parseEvent(line)
+
+			if diagnostics {
+				fmt.Println("Parsed into: ", timestamp, deviceId, eventSize, eventCode, err)
+			}
+
 			if err != nil {
 				logErrorEvent(fileName, line, lineNo, err)
 			} else {
@@ -238,17 +331,29 @@ func main() {
 					// First occurence
 					bufferSize[deviceId] = rand.Intn(BuffWaterMarkSize)
 				}
-				if bufferSize[deviceId]+eventSize > BuffWaterMarkSize {
-					pkg := Pack(timestamp, deviceId)
-					// Send a new package
-					packages = append(packages, pkg)
+				if diagnostics {
+					fmt.Println("Buff: ", bufferSize[deviceId])
+					fmt.Println("Watermark:", BuffWaterMarkSize)
+				}
+
+				if supress && isDiagnosticEvent(eventCode) {
+					// If supress diagnostic commands is requested, then ignore them
 					if diagnostics {
-						fmt.Println("Sent package: ", pkg)
+						fmt.Println("Skipped:", timestamp, deviceId, eventSize, eventCode, err)
 					}
-					// Start the buffer from the beginning
-					bufferSize[deviceId] = eventSize
 				} else {
-					bufferSize[deviceId] += eventSize
+					if bufferSize[deviceId]+eventSize > BuffWaterMarkSize {
+						pkg := Pack(timestamp, deviceId, eventCode)
+						// Send a new package
+						packages = append(packages, pkg)
+						if diagnostics {
+							fmt.Println("Sent package: ", pkg)
+						}
+						// Start the buffer from the beginning
+						bufferSize[deviceId] = eventSize
+					} else {
+						bufferSize[deviceId] += eventSize
+					}
 				}
 			}
 
@@ -263,8 +368,12 @@ func main() {
 	fmt.Println("Number of devices:\t", len(bufferSize))
 	fmt.Println("Total events: \t\t", totalEvents)
 	fmt.Println("Total packages:\t\t", len(packages))
-	fmt.Println("First package sent at: ", packages[0].timestamp)
-	fmt.Println("Last  package sent at: ", packages[len(packages)-1].timestamp)
+	if len(packages) > 0 {
+		fmt.Println("First package sent at: ", packages[0].timestamp)
+		fmt.Println("Last  package sent at: ", packages[len(packages)-1].timestamp)
+	} else {
+		fmt.Println("No packages were sent")
+	}
 	fmt.Println("Error entries number: ", len(errorsLog))
 	fmt.Println("Total reported at times: ", total)
 	fmt.Printf("Max per second: %d at %v\n", max.numberOfEvents, max.timestamp)
@@ -330,7 +439,9 @@ func printEventsPerSecond(packages PackageList) (max TimepointType, avg int, tot
 	w.Flush()
 	file.Close()
 
-	avg = avg / len(orderedEventsPerSecond)
+	if len(orderedEventsPerSecond) > 0 {
+		avg = avg / len(orderedEventsPerSecond)
+	}
 	total = len(orderedEventsPerSecond)
 
 	return
