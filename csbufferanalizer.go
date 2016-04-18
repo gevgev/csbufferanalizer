@@ -372,6 +372,11 @@ func getFilesToProcess() []string {
 	}
 
 	sort.Strings(fileList)
+	if diagnostics {
+		for _, path := range fileList {
+			fmt.Println(path)
+		}
+	}
 	return fileList
 }
 
