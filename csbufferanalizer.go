@@ -1,7 +1,5 @@
 package main
 
-// TODO: 1. Add time span processing; - added, but something is wrong!!! 2. FIXED: There probably is a bug for averages.
-
 import (
 	"bufio"
 	"encoding/hex"
