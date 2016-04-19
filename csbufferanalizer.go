@@ -1,5 +1,7 @@
 package main
 
+// TODO: 1. Add time span processing; 2. FIXED: There probably is a bug for averages.
+
 import (
 	"bufio"
 	"encoding/hex"
@@ -434,7 +436,7 @@ func printEventsPerSecond(packages PackageList) (max TimepointType, avg int, tot
 			max = points
 		}
 
-		avg += max.numberOfEvents
+		avg += points.numberOfEvents
 	}
 	w.Flush()
 	file.Close()
