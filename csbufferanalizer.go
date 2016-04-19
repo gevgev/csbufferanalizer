@@ -1,6 +1,6 @@
 package main
 
-// TODO: 1. Add time span processing; 2. FIXED: There probably is a bug for averages.
+// TODO: 1. Add time span processing; - added, but something is wrong!!! 2. FIXED: There probably is a bug for averages.
 
 import (
 	"bufio"
@@ -28,6 +28,7 @@ var (
 	verbose        bool
 	supress        bool
 	singleFileMode bool
+	primetimeOnly  bool
 	appName        string
 )
 
@@ -50,6 +51,7 @@ func init() {
 	flagConcurrency := flag.Int("c", 100, "The number of files to process `concurrent`ly")
 	flagVerbose := flag.Bool("v", false, "`Verbose`: outputs to the screen")
 	flagSupress2am := flag.Bool("S", false, "`Supress`: 2am-3am diagnostics messages")
+	flagPrimetime := flag.Bool("P", false, "`Primetime`: 8pm-11pm events only")
 
 	flag.Parse()
 	if flag.Parsed() {
@@ -62,6 +64,7 @@ func init() {
 		concurrency = *flagConcurrency
 		verbose = *flagVerbose
 		supress = *flagSupress2am
+		primetimeOnly = *flagPrimetime
 		appName = os.Args[0]
 		if inFileName == "" && dirName == "" && len(os.Args) == 2 {
 			inFileName = os.Args[1]
@@ -284,7 +287,13 @@ func printOutputFile(packages PackageList) {
 	}
 	w := bufio.NewWriter(file)
 	for _, pkg := range packages {
+		//		if primetimeOnly {
+		//			if pkg.timestamp.Hour() >= 20.0 && pkg.timestamp.Hour() < 11.0 {
+		//				fmt.Fprintln(w, pkg)
+		//			}
+		//		} else {
 		fmt.Fprintln(w, pkg)
+		//		}
 	}
 	w.Flush()
 	file.Close()
@@ -411,10 +420,22 @@ func printEventsPerSecond(packages PackageList) (max TimepointType, avg int, tot
 	eventsPerSecond := make(map[time.Time]int)
 
 	for _, pkg := range packages {
-		if _, ok := eventsPerSecond[pkg.timestamp]; ok {
-			eventsPerSecond[pkg.timestamp]++
+		//		fmt.Println("Pkg timestamp: ", pkg.timestamp.Hour())
+
+		if primetimeOnly {
+			if pkg.timestamp.Hour() >= 20.0 && pkg.timestamp.Hour() < 23.0 {
+				if _, ok := eventsPerSecond[pkg.timestamp]; ok {
+					eventsPerSecond[pkg.timestamp]++
+				} else {
+					eventsPerSecond[pkg.timestamp] = 1
+				}
+			}
 		} else {
-			eventsPerSecond[pkg.timestamp] = 1
+			if _, ok := eventsPerSecond[pkg.timestamp]; ok {
+				eventsPerSecond[pkg.timestamp]++
+			} else {
+				eventsPerSecond[pkg.timestamp] = 1
+			}
 		}
 	}
 
@@ -429,6 +450,7 @@ func printEventsPerSecond(packages PackageList) (max TimepointType, avg int, tot
 	if err != nil {
 		fmt.Println(err)
 	}
+
 	w := bufio.NewWriter(file)
 	for _, points := range orderedEventsPerSecond {
 		fmt.Fprintf(w, "%v, %d\n", points.timestamp, points.numberOfEvents)
@@ -444,6 +466,7 @@ func printEventsPerSecond(packages PackageList) (max TimepointType, avg int, tot
 	if len(orderedEventsPerSecond) > 0 {
 		avg = avg / len(orderedEventsPerSecond)
 	}
+
 	total = len(orderedEventsPerSecond)
 
 	return
