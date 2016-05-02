@@ -444,13 +444,38 @@ func printEventsPerSecond(packages PackageList) (max TimepointType, avg int, tot
 
 	sort.Sort(orderedEventsPerSecond)
 
-	file, err := os.Create("eventsPerSecond.csv")
+	if len(orderedEventsPerSecond) == 0 {
+		// Nothing to print
+		if diagnostics {
+			fmt.Println("No events were found for primetime")
+		}
+		return
+	}
+	// This is going to be the first file name
+	currentYear, currentMonth, currentDay := orderedEventsPerSecond[0].timestamp.Date()
+
+	file, err := os.Create(formateCurrentFileName(currentYear, currentMonth, currentDay))
 	if err != nil {
 		fmt.Println(err)
 	}
 
 	w := bufio.NewWriter(file)
 	for _, points := range orderedEventsPerSecond {
+
+		if !validateFileDate(currentYear, currentMonth, currentDay, points.timestamp) {
+			// Close current file, open a new file - new date
+			w.Flush()
+			file.Close()
+
+			currentYear, currentMonth, currentDay = points.timestamp.Date()
+
+			file, err = os.Create(formateCurrentFileName(currentYear, currentMonth, currentDay))
+			if err != nil {
+				fmt.Println(err)
+			}
+			w = bufio.NewWriter(file)
+		}
+
 		fmt.Fprintf(w, "%v, %d\n", points.timestamp, points.numberOfEvents)
 		if points.numberOfEvents > max.numberOfEvents {
 			max = points
@@ -458,6 +483,7 @@ func printEventsPerSecond(packages PackageList) (max TimepointType, avg int, tot
 
 		avg += points.numberOfEvents
 	}
+	// Closing the last file
 	w.Flush()
 	file.Close()
 
@@ -468,6 +494,21 @@ func printEventsPerSecond(packages PackageList) (max TimepointType, avg int, tot
 	total = len(orderedEventsPerSecond)
 
 	return
+}
+
+// Compare current date and the date for the next event's timestamp
+func validateFileDate(currentYear int, currentMonth time.Month, currentDay int, timestamp time.Time) bool {
+	year, month, day := timestamp.Date()
+	return (year == currentYear && month == currentMonth && day == currentDay)
+}
+
+// filename for the current date
+func formateCurrentFileName(currentYear int, currentMoth time.Month, currentDay int) string {
+	fileName := fmt.Sprintf("eventsPerSecond-%04d-%02d-%02d.csv", currentYear, int(currentMoth), currentDay)
+	if(diagnostics){
+		fmt.Println("New filename: ", fileName)
+	}
+	return fileName
 }
 
 // Get the list of files to process in the target folder
