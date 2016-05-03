@@ -27,6 +27,7 @@ var (
 	supress        bool
 	singleFileMode bool
 	primetimeOnly  bool
+	cummulativePrimetimeOnly bool
 	appName        string
 )
 
@@ -50,6 +51,7 @@ func init() {
 	flagVerbose := flag.Bool("v", false, "`Verbose`: outputs to the screen")
 	flagSupress2am := flag.Bool("S", false, "`Supress`: 2am-3am diagnostics messages")
 	flagPrimetime := flag.Bool("P", false, "`Primetime`: 8pm-11pm events only")
+	flagCombinedPrimetime := flag.Bool("PC", false, "`Cumulative Primetime`: 8pm-11pm events only cummulative single file")
 
 	flag.Parse()
 	if flag.Parsed() {
@@ -63,6 +65,7 @@ func init() {
 		verbose = *flagVerbose
 		supress = *flagSupress2am
 		primetimeOnly = *flagPrimetime
+		cummulativePrimetimeOnly = *flagCombinedPrimetime
 		appName = os.Args[0]
 		if inFileName == "" && dirName == "" && len(os.Args) == 2 {
 			inFileName = os.Args[1]
@@ -428,6 +431,18 @@ func printEventsPerSecond(packages PackageList) (max TimepointType, avg int, tot
 					eventsPerSecond[pkg.timestamp] = 1
 				}
 			}
+		} else if cummulativePrimetimeOnly {
+			// We will ignore dates, only timestamps matter
+			if pkg.timestamp.Hour() >= 20.0 && pkg.timestamp.Hour() < 23.0 {
+
+				unifiedTimeStampVal := unifiedTimeStamp(pkg.timestamp)
+				if _, ok := eventsPerSecond[unifiedTimeStampVal]; ok {
+					eventsPerSecond[unifiedTimeStampVal]++
+				} else {
+					eventsPerSecond[unifiedTimeStampVal] = 1
+				}
+			}
+
 		} else {
 			if _, ok := eventsPerSecond[pkg.timestamp]; ok {
 				eventsPerSecond[pkg.timestamp]++
@@ -494,6 +509,14 @@ func printEventsPerSecond(packages PackageList) (max TimepointType, avg int, tot
 	total = len(orderedEventsPerSecond)
 
 	return
+}
+
+// Drops the date part, make everything time of 01/01/2016
+func unifiedTimeStamp(timestamp time.Time) time.Time {
+	hour, min, sec := timestamp.Clock()
+
+	unifiedDateTime := time.Date(2016, 1, 1, hour, min, sec, 0, time.Local)
+	return unifiedDateTime
 }
 
 // Compare current date and the date for the next event's timestamp
