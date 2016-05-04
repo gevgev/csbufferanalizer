@@ -16,19 +16,19 @@ import (
 )
 
 var (
-	inFileName     string
-	dirName        string
-	inExtension    string
-	diagnostics    bool
-	outputFormat   string
-	outputFileName string
-	concurrency    int
-	verbose        bool
-	supress        bool
-	singleFileMode bool
-	primetimeOnly  bool
+	inFileName               string
+	dirName                  string
+	inExtension              string
+	diagnostics              bool
+	outputFormat             string
+	outputFileName           string
+	concurrency              int
+	verbose                  bool
+	supress                  bool
+	singleFileMode           bool
+	primetimeOnly            bool
 	cummulativePrimetimeOnly bool
-	appName        string
+	appName                  string
 )
 
 const (
@@ -170,7 +170,7 @@ func convertToLogName(cmd string) (string, error) {
 }
 
 // just extract timestamp, device Id, and calculate event size
-func parseEvent(line string) (timestamp time.Time, deviceId string, eventSize int, eventCode string, err error) {
+func parseEvent(line string, vodLogChan chan<- VodEventLogEntry) (timestamp time.Time, deviceId string, eventSize int, eventCode string, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			timestamp = time.Now()
@@ -204,7 +204,36 @@ func parseEvent(line string) (timestamp time.Time, deviceId string, eventSize in
 	if timestamp.After(time.Now()) {
 		err = errors.New("Wrong date: " + timestamp.String())
 	}
+
+	if ok, logEntry := checkAndLogForVodActivity(eventCode, timestamp, deviceId, clickString); ok == true {
+		vodLogChan <- logEntry
+	}
 	return
+}
+
+func checkAndLogForVodActivity(eventCode string, timestamp time.Time, deviceId string, clickString string) (bool, VodEventLogEntry) {
+	switch eventCode {
+	case "`G`VOD Category": // "47": // G
+		return true, VodEventLogEntry{timestamp, deviceId, eventCode}
+	case "`I`Info Screen": // "49": // I
+		if convertToString(clickString[10:12]) == "V" {
+			return true, VodEventLogEntry{timestamp, deviceId, eventCode + " / Type V"}
+		}
+	case "`V`Video Playback Session (non- OCAP)": // "56": // V
+		if convertToString(clickString[26:28]) == "V" {
+			return true, VodEventLogEntry{timestamp, deviceId, eventCode + " / Source V"}
+		}
+	default:
+		return false, VodEventLogEntry{}
+	}
+
+	return false, VodEventLogEntry{}
+}
+
+type VodEventLogEntry struct {
+	timestamp time.Time
+	deviceId  string
+	eventcode string
 }
 
 type ErrorLogEntry struct {
@@ -304,6 +333,20 @@ func main() {
 	startTime := time.Now()
 	rand.Seed(int64(startTime.Second()))
 
+	vodLogChan := make(chan VodEventLogEntry)
+	var vodLog OrderedVodLogList
+
+	go func() {
+		for {
+			logEntry, more := <-vodLogChan
+			if more {
+				vodLog = append(vodLog, logEntry)
+			} else {
+				return
+			}
+		}
+	}()
+
 	packages := []Package{}
 
 	files := getFilesToProcess() //getFiles()
@@ -330,7 +373,7 @@ func main() {
 			if diagnostics {
 				fmt.Println("Got next line: ", line)
 			}
-			timestamp, deviceId, eventSize, eventCode, err := parseEvent(line)
+			timestamp, deviceId, eventSize, eventCode, err := parseEvent(line, vodLogChan)
 
 			if diagnostics {
 				fmt.Println("Parsed into: ", timestamp, deviceId, eventSize, eventCode, err)
@@ -374,8 +417,11 @@ func main() {
 		file.Close()
 	}
 
+	// closing the VodLogChannel
+	close(vodLogChan)
 	printOutputFile(packages)
 	max, avg, total := printEventsPerSecond(packages)
+	printVodLogEntries(vodLog)
 	printErrorLogs()
 	fmt.Println("Number of devices:\t", len(bufferSize))
 	fmt.Println("Total events: \t\t", totalEvents)
@@ -391,6 +437,61 @@ func main() {
 	fmt.Printf("Max per second: %d at %v\n", max.numberOfEvents, max.timestamp)
 	fmt.Println("Average per second: ", avg)
 	fmt.Printf("Processed %d files in %v\n", len(files), time.Since(startTime))
+}
+
+func printVodLogEntries(vodLog OrderedVodLogList) {
+
+	if len(vodLog) == 0 {
+		fmt.Println("No VOD events")
+	} else {
+		sort.Sort(vodLog)
+		// Now save this to a vod log file
+		// This is going to be the first file name
+		currentYear, currentMonth, currentDay := vodLog[0].timestamp.Date()
+
+		file, err := os.Create(formateCurrentFileName("vodLog", currentYear, currentMonth, currentDay))
+		if err != nil {
+			fmt.Println(err)
+		}
+
+		w := bufio.NewWriter(file)
+		for _, vodEntry := range vodLog {
+
+			if !validateFileDate(currentYear, currentMonth, currentDay, vodEntry.timestamp) {
+				// Close current file, open a new file - new date
+				w.Flush()
+				file.Close()
+
+				currentYear, currentMonth, currentDay = vodEntry.timestamp.Date()
+
+				file, err = os.Create(formateCurrentFileName("vodLog", currentYear, currentMonth, currentDay))
+				if err != nil {
+					fmt.Println(err)
+				}
+				w = bufio.NewWriter(file)
+			}
+
+			fmt.Fprintf(w, "%v, %v, %v\n", vodEntry.timestamp, vodEntry.deviceId, vodEntry.eventcode)
+		}
+		// Closing the last file
+		w.Flush()
+		file.Close()
+	}
+
+}
+
+type OrderedVodLogList []VodEventLogEntry
+
+func (list OrderedVodLogList) Len() int {
+	return len(list)
+}
+
+func (list OrderedVodLogList) Swap(i, j int) {
+	list[i], list[j] = list[j], list[i]
+}
+
+func (list OrderedVodLogList) Less(i, j int) bool {
+	return list[i].timestamp.Before(list[j].timestamp)
 }
 
 // Single Clickstream package "sending"
@@ -469,7 +570,7 @@ func printEventsPerSecond(packages PackageList) (max TimepointType, avg int, tot
 	// This is going to be the first file name
 	currentYear, currentMonth, currentDay := orderedEventsPerSecond[0].timestamp.Date()
 
-	file, err := os.Create(formateCurrentFileName(currentYear, currentMonth, currentDay))
+	file, err := os.Create(formateCurrentFileName("eventsPerSecond", currentYear, currentMonth, currentDay))
 	if err != nil {
 		fmt.Println(err)
 	}
@@ -484,7 +585,7 @@ func printEventsPerSecond(packages PackageList) (max TimepointType, avg int, tot
 
 			currentYear, currentMonth, currentDay = points.timestamp.Date()
 
-			file, err = os.Create(formateCurrentFileName(currentYear, currentMonth, currentDay))
+			file, err = os.Create(formateCurrentFileName("eventsPerSecond", currentYear, currentMonth, currentDay))
 			if err != nil {
 				fmt.Println(err)
 			}
@@ -526,9 +627,9 @@ func validateFileDate(currentYear int, currentMonth time.Month, currentDay int, 
 }
 
 // filename for the current date
-func formateCurrentFileName(currentYear int, currentMoth time.Month, currentDay int) string {
-	fileName := fmt.Sprintf("eventsPerSecond-%04d-%02d-%02d.csv", currentYear, int(currentMoth), currentDay)
-	if(diagnostics){
+func formateCurrentFileName(fileprefix string, currentYear int, currentMoth time.Month, currentDay int) string {
+	fileName := fmt.Sprintf("%s-%04d-%02d-%02d.csv", fileprefix, currentYear, int(currentMoth), currentDay)
+	if diagnostics {
 		fmt.Println("New filename: ", fileName)
 	}
 	return fileName
