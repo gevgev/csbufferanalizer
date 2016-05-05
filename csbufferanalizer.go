@@ -28,6 +28,7 @@ var (
 	singleFileMode           bool
 	primetimeOnly            bool
 	cummulativePrimetimeOnly bool
+	vodLogOn                 bool
 	appName                  string
 )
 
@@ -52,6 +53,7 @@ func init() {
 	flagSupress2am := flag.Bool("S", false, "`Supress`: 2am-3am diagnostics messages")
 	flagPrimetime := flag.Bool("P", false, "`Primetime`: 8pm-11pm events only")
 	flagCombinedPrimetime := flag.Bool("PC", false, "`Cumulative Primetime`: 8pm-11pm events only cummulative single file")
+	flagVod := flag.Bool("VOD", false, "Create the log(s) for `VOD` activity")
 
 	flag.Parse()
 	if flag.Parsed() {
@@ -66,6 +68,7 @@ func init() {
 		supress = *flagSupress2am
 		primetimeOnly = *flagPrimetime
 		cummulativePrimetimeOnly = *flagCombinedPrimetime
+		vodLogOn = *flagVod
 		appName = os.Args[0]
 		if inFileName == "" && dirName == "" && len(os.Args) == 2 {
 			inFileName = os.Args[1]
@@ -205,8 +208,10 @@ func parseEvent(line string, vodLogChan chan<- VodEventLogEntry) (timestamp time
 		err = errors.New("Wrong date: " + timestamp.String())
 	}
 
-	if ok, logEntry := checkAndLogForVodActivity(eventCode, timestamp, deviceId, clickString); ok == true {
-		vodLogChan <- logEntry
+	if vodLogOn {
+		if ok, logEntry := checkAndLogForVodActivity(eventCode, timestamp, deviceId, clickString); ok == true {
+			vodLogChan <- logEntry
+		}
 	}
 	return
 }
@@ -421,7 +426,9 @@ func main() {
 	close(vodLogChan)
 	printOutputFile(packages)
 	max, avg, total := printEventsPerSecond(packages)
-	printVodLogEntries(vodLog)
+	if vodLogOn {
+		printVodLogEntries(vodLog)
+	}
 	printErrorLogs()
 	fmt.Println("Number of devices:\t", len(bufferSize))
 	fmt.Println("Total events: \t\t", totalEvents)
