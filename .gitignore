@@ -8,5 +8,5 @@ csbufferanalizer
 *.txt
 test/*.*
 *.csv
-
-
+*.rpt
+*.xlsx
