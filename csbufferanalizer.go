@@ -29,6 +29,7 @@ var (
 	primetimeOnly            bool
 	cummulativePrimetimeOnly bool
 	vodLogOn                 bool
+	eventSequenceLogOnly	 bool
 	appName                  string
 )
 
@@ -54,6 +55,7 @@ func init() {
 	flagPrimetime := flag.Bool("P", false, "`Primetime`: 8pm-11pm events only")
 	flagCombinedPrimetime := flag.Bool("PC", false, "`Cumulative Primetime`: 8pm-11pm events only cummulative single file")
 	flagVod := flag.Bool("VOD", false, "Create the log(s) for `VOD` activity")
+	flagEventSequenceLogOnly := flag.Bool("L", false, "Events sequence `log`")
 
 	flag.Parse()
 	if flag.Parsed() {
@@ -69,6 +71,8 @@ func init() {
 		primetimeOnly = *flagPrimetime
 		cummulativePrimetimeOnly = *flagCombinedPrimetime
 		vodLogOn = *flagVod
+		eventSequenceLogOnly = *flagEventSequenceLogOnly
+
 		appName = os.Args[0]
 		if inFileName == "" && dirName == "" && len(os.Args) == 2 {
 			inFileName = os.Args[1]
@@ -173,7 +177,7 @@ func convertToLogName(cmd string) (string, error) {
 }
 
 // just extract timestamp, device Id, and calculate event size
-func parseEvent(line string, vodLogChan chan<- VodEventLogEntry) (timestamp time.Time, deviceId string, eventSize int, eventCode string, err error) {
+func parseEvent(line string, eventLogChan chan<- EventLogEntry) (timestamp time.Time, deviceId string, eventSize int, eventCode string, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			timestamp = time.Now()
@@ -210,32 +214,33 @@ func parseEvent(line string, vodLogChan chan<- VodEventLogEntry) (timestamp time
 
 	if vodLogOn {
 		if ok, logEntry := checkAndLogForVodActivity(eventCode, timestamp, deviceId, clickString); ok == true {
-			vodLogChan <- logEntry
+			eventLogChan <- logEntry
 		}
+	} else if eventSequenceLogOnly {
+			eventLogChan <- EventLogEntry{timestamp, deviceId, eventCode}
 	}
 	return
 }
 
-func checkAndLogForVodActivity(eventCode string, timestamp time.Time, deviceId string, clickString string) (bool, VodEventLogEntry) {
+func checkAndLogForVodActivity(eventCode string, timestamp time.Time, deviceId string, clickString string) (bool, EventLogEntry) {
 	switch eventCode {
 	case "`G`VOD Category": // "47": // G
-		return true, VodEventLogEntry{timestamp, deviceId, eventCode}
+		return true, EventLogEntry{timestamp, deviceId, eventCode}
 	case "`I`Info Screen": // "49": // I
 		if convertToString(clickString[10:12]) == "V" {
-			return true, VodEventLogEntry{timestamp, deviceId, eventCode + " / Type V"}
+			return true, EventLogEntry{timestamp, deviceId, eventCode + " / Type V"}
 		}
 	case "`V`Video Playback Session (non- OCAP)": // "56": // V
 		if convertToString(clickString[26:28]) == "V" {
-			return true, VodEventLogEntry{timestamp, deviceId, eventCode + " / Source V"}
+			return true, EventLogEntry{timestamp, deviceId, eventCode + " / Source V"}
 		}
 	default:
-		return false, VodEventLogEntry{}
+		return false, EventLogEntry{}
 	}
-
-	return false, VodEventLogEntry{}
+	return false, EventLogEntry{}
 }
 
-type VodEventLogEntry struct {
+type EventLogEntry struct {
 	timestamp time.Time
 	deviceId  string
 	eventcode string
@@ -338,12 +343,12 @@ func main() {
 	startTime := time.Now()
 	rand.Seed(int64(startTime.Second()))
 
-	vodLogChan := make(chan VodEventLogEntry)
+	eventLogChan := make(chan EventLogEntry)
 	var vodLog OrderedVodLogList
 
 	go func() {
 		for {
-			logEntry, more := <-vodLogChan
+			logEntry, more := <-eventLogChan
 			if more {
 				vodLog = append(vodLog, logEntry)
 			} else {
@@ -378,7 +383,7 @@ func main() {
 			if diagnostics {
 				fmt.Println("Got next line: ", line)
 			}
-			timestamp, deviceId, eventSize, eventCode, err := parseEvent(line, vodLogChan)
+			timestamp, deviceId, eventSize, eventCode, err := parseEvent(line, eventLogChan)
 
 			if diagnostics {
 				fmt.Println("Parsed into: ", timestamp, deviceId, eventSize, eventCode, err)
@@ -422,8 +427,8 @@ func main() {
 		file.Close()
 	}
 
-	// closing the VodLogChannel
-	close(vodLogChan)
+	// closing the eventLogChannel
+	close(eventLogChan)
 	printOutputFile(packages)
 	max, avg, total := printEventsPerSecond(packages)
 	if vodLogOn {
@@ -487,7 +492,7 @@ func printVodLogEntries(vodLog OrderedVodLogList) {
 
 }
 
-type OrderedVodLogList []VodEventLogEntry
+type OrderedVodLogList []EventLogEntry
 
 func (list OrderedVodLogList) Len() int {
 	return len(list)
