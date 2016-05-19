@@ -177,7 +177,7 @@ func convertToLogName(cmd string) (string, error) {
 }
 
 // just extract timestamp, device Id, and calculate event size
-func parseEvent(line string, eventLogChan chan<- EventLogEntry) (timestamp time.Time, deviceId string, eventSize int, eventCode string, err error) {
+func parseEvent(line string, eventLogChan chan<- EventLogEntry, mso string) (timestamp time.Time, deviceId string, eventSize int, eventCode string, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			timestamp = time.Now()
@@ -213,26 +213,26 @@ func parseEvent(line string, eventLogChan chan<- EventLogEntry) (timestamp time.
 	}
 
 	if vodLogOn {
-		if ok, logEntry := checkAndLogForVodActivity(eventCode, timestamp, deviceId, clickString); ok == true {
+		if ok, logEntry := checkAndLogForVodActivity(eventCode, timestamp, deviceId, clickString, mso); ok == true {
 			eventLogChan <- logEntry
 		}
 	} else if eventSequenceLogOnly {
-		eventLogChan <- EventLogEntry{timestamp, deviceId, eventCode}
+		eventLogChan <- EventLogEntry{timestamp, deviceId, eventCode, mso}
 	}
 	return
 }
 
-func checkAndLogForVodActivity(eventCode string, timestamp time.Time, deviceId string, clickString string) (bool, EventLogEntry) {
+func checkAndLogForVodActivity(eventCode string, timestamp time.Time, deviceId string, clickString string, mso string) (bool, EventLogEntry) {
 	switch eventCode {
 	case "`G`VOD Category": // "47": // G
-		return true, EventLogEntry{timestamp, deviceId, eventCode}
+		return true, EventLogEntry{timestamp, deviceId, eventCode, mso}
 	case "`I`Info Screen": // "49": // I
 		if convertToString(clickString[10:12]) == "V" {
-			return true, EventLogEntry{timestamp, deviceId, eventCode + " / Type V"}
+			return true, EventLogEntry{timestamp, deviceId, eventCode + " / Type V", mso}
 		}
 	case "`V`Video Playback Session (non- OCAP)": // "56": // V
 		if convertToString(clickString[26:28]) == "V" {
-			return true, EventLogEntry{timestamp, deviceId, eventCode + " / Source V"}
+			return true, EventLogEntry{timestamp, deviceId, eventCode + " / Source V", mso}
 		}
 	default:
 		return false, EventLogEntry{}
@@ -244,6 +244,7 @@ type EventLogEntry struct {
 	timestamp time.Time
 	deviceId  string
 	eventcode string
+	mso       string
 }
 
 type ErrorLogEntry struct {
@@ -339,6 +340,11 @@ func printOutputFile(packages PackageList) {
 	file.Close()
 }
 
+func msoName(fileName string) string {
+	mso := fileName[strings.LastIndex(fileName, "_")+1 : strings.LastIndex(fileName, ".")]
+	return mso
+}
+
 func main() {
 	startTime := time.Now()
 	rand.Seed(int64(startTime.Second()))
@@ -374,7 +380,7 @@ func main() {
 			fmt.Println("Error opening file: ", err)
 			continue
 		}
-
+		mso := msoName(fileName)
 		scanner := bufio.NewScanner(file)
 		lineNo := 0
 		for scanner.Scan() {
@@ -383,7 +389,7 @@ func main() {
 			if diagnostics {
 				fmt.Println("Got next line: ", line)
 			}
-			timestamp, deviceId, eventSize, eventCode, err := parseEvent(line, eventLogChan)
+			timestamp, deviceId, eventSize, eventCode, err := parseEvent(line, eventLogChan, mso)
 
 			if diagnostics {
 				fmt.Println("Parsed into: ", timestamp, deviceId, eventSize, eventCode, err)
@@ -469,7 +475,8 @@ func printAllEvents(eventsLog OrderedVodLogList) {
 
 		w := bufio.NewWriter(file)
 		for _, event := range eventsLog {
-			fmt.Fprintf(w, "%v, %v, %v\n", event.timestamp, event.deviceId, event.eventcode)
+			fmt.Fprintf(w, "%v, %v, %v, %v\n",
+				event.timestamp, event.deviceId, event.eventcode, event.mso)
 		}
 		// Closing the file
 		w.Flush()
@@ -510,7 +517,8 @@ func printVodLogEntries(vodLog OrderedVodLogList) {
 				w = bufio.NewWriter(file)
 			}
 
-			fmt.Fprintf(w, "%v, %v, %v\n", vodEntry.timestamp, vodEntry.deviceId, vodEntry.eventcode)
+			fmt.Fprintf(w, "%v, %v, %v\n",
+				vodEntry.timestamp, vodEntry.deviceId, vodEntry.eventcode, vodEntry.mso)
 		}
 		// Closing the last file
 		w.Flush()
