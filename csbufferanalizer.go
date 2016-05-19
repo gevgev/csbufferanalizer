@@ -454,7 +454,11 @@ func main() {
 
 	// closing the eventLogChannel
 	close(eventLogChan)
-	printOutputFile(packages)
+
+	if !eventSequenceLogOnly {
+		printOutputFile(packages)
+	}
+
 	max, avg, total := printEventsPerSecond(packages)
 	if vodLogOn {
 		printVodLogEntries(vodLog)
@@ -487,7 +491,7 @@ func printAllEvents(eventsLog OrderedVodLogList) {
 		sort.Sort(eventsLog)
 		// Now save this to a a single events log file
 
-		file, err := os.Create("eventsLog.csv")
+		file, err := os.Create("eventsLog-" + time.Now().Format("01 02 2006_15 04 05") + ".csv")
 		if err != nil {
 			fmt.Println(err)
 		}
@@ -633,41 +637,52 @@ func printEventsPerSecond(packages PackageList) (max TimepointType, avg int, tot
 		}
 		return
 	}
-	// This is going to be the first file name
-	currentYear, currentMonth, currentDay := orderedEventsPerSecond[0].timestamp.Date()
 
-	file, err := os.Create(formateCurrentFileName("eventsPerSecond", currentYear, currentMonth, currentDay))
-	if err != nil {
-		fmt.Println(err)
-	}
-
-	w := bufio.NewWriter(file)
-	for _, points := range orderedEventsPerSecond {
-
-		if !validateFileDate(currentYear, currentMonth, currentDay, points.timestamp) {
-			// Close current file, open a new file - new date
-			w.Flush()
-			file.Close()
-
-			currentYear, currentMonth, currentDay = points.timestamp.Date()
-
-			file, err = os.Create(formateCurrentFileName("eventsPerSecond", currentYear, currentMonth, currentDay))
-			if err != nil {
-				fmt.Println(err)
+	if eventSequenceLogOnly {
+		for _, points := range orderedEventsPerSecond {
+			if points.numberOfEvents > max.numberOfEvents {
+				max = points
 			}
-			w = bufio.NewWriter(file)
+			avg += points.numberOfEvents
 		}
 
-		fmt.Fprintf(w, "%v, %d\n", points.timestamp, points.numberOfEvents)
-		if points.numberOfEvents > max.numberOfEvents {
-			max = points
+	} else {
+		// This is going to be the first file name
+		currentYear, currentMonth, currentDay := orderedEventsPerSecond[0].timestamp.Date()
+
+		file, err := os.Create(formateCurrentFileName("eventsPerSecond", currentYear, currentMonth, currentDay))
+		if err != nil {
+			fmt.Println(err)
 		}
 
-		avg += points.numberOfEvents
+		w := bufio.NewWriter(file)
+		for _, points := range orderedEventsPerSecond {
+
+			if !validateFileDate(currentYear, currentMonth, currentDay, points.timestamp) {
+				// Close current file, open a new file - new date
+				w.Flush()
+				file.Close()
+
+				currentYear, currentMonth, currentDay = points.timestamp.Date()
+
+				file, err = os.Create(formateCurrentFileName("eventsPerSecond", currentYear, currentMonth, currentDay))
+				if err != nil {
+					fmt.Println(err)
+				}
+				w = bufio.NewWriter(file)
+			}
+
+			fmt.Fprintf(w, "%v, %d\n", points.timestamp, points.numberOfEvents)
+			if points.numberOfEvents > max.numberOfEvents {
+				max = points
+			}
+
+			avg += points.numberOfEvents
+		}
+		// Closing the last file
+		w.Flush()
+		file.Close()
 	}
-	// Closing the last file
-	w.Flush()
-	file.Close()
 
 	if len(orderedEventsPerSecond) > 0 {
 		avg = avg / len(orderedEventsPerSecond)
