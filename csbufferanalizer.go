@@ -29,7 +29,7 @@ var (
 	primetimeOnly            bool
 	cummulativePrimetimeOnly bool
 	vodLogOn                 bool
-	eventSequenceLogOnly	 bool
+	eventSequenceLogOnly     bool
 	appName                  string
 )
 
@@ -217,7 +217,7 @@ func parseEvent(line string, eventLogChan chan<- EventLogEntry) (timestamp time.
 			eventLogChan <- logEntry
 		}
 	} else if eventSequenceLogOnly {
-			eventLogChan <- EventLogEntry{timestamp, deviceId, eventCode}
+		eventLogChan <- EventLogEntry{timestamp, deviceId, eventCode}
 	}
 	return
 }
@@ -433,7 +433,10 @@ func main() {
 	max, avg, total := printEventsPerSecond(packages)
 	if vodLogOn {
 		printVodLogEntries(vodLog)
+	} else if eventSequenceLogOnly {
+		printAllEvents(vodLog)
 	}
+
 	printErrorLogs()
 	fmt.Println("Number of devices:\t", len(bufferSize))
 	fmt.Println("Total events: \t\t", totalEvents)
@@ -449,6 +452,30 @@ func main() {
 	fmt.Printf("Max per second: %d at %v\n", max.numberOfEvents, max.timestamp)
 	fmt.Println("Average per second: ", avg)
 	fmt.Printf("Processed %d files in %v\n", len(files), time.Since(startTime))
+}
+
+func printAllEvents(eventsLog OrderedVodLogList) {
+
+	if len(eventsLog) == 0 {
+		fmt.Println("No events")
+	} else {
+		sort.Sort(eventsLog)
+		// Now save this to a a single events log file
+
+		file, err := os.Create("eventsLog.csv")
+		if err != nil {
+			fmt.Println(err)
+		}
+
+		w := bufio.NewWriter(file)
+		for _, event := range eventsLog {
+			fmt.Fprintf(w, "%v, %v, %v\n", event.timestamp, event.deviceId, event.eventcode)
+		}
+		// Closing the file
+		w.Flush()
+		file.Close()
+	}
+
 }
 
 func printVodLogEntries(vodLog OrderedVodLogList) {
