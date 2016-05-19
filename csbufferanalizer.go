@@ -185,16 +185,34 @@ func parseEvent(line string, eventLogChan chan<- EventLogEntry, mso string) (tim
 		}
 	}()
 
+	var receivedIndex, deviceIndex, clickstringIndex int
+
 	tokens := strings.Split(line, " ")
-	if len(tokens) != 2 {
+	switch len(tokens) {
+	case 2:
+		receivedIndex = -1
+		deviceIndex = 0
+		clickstringIndex = 1
+	case 3:
+		receivedIndex = 0
+		deviceIndex = 1
+		clickstringIndex = 2
+	default:
 		if diagnostics {
 			fmt.Println("Tokens were too many:", tokens)
 		}
 		return time.Now(), "", 0, "", errors.New("Wrong line format")
 	}
 
-	deviceId = tokens[0]
-	clickString := tokens[1]
+	deviceId = tokens[deviceIndex]
+	clickString := tokens[clickstringIndex]
+	var received string
+	if receivedIndex > -1 {
+		received = tokens[receivedIndex]
+	} else {
+		received = "1900-01-01 00:00:00"
+	}
+
 	eventCode, err = convertToLogName(clickString[0:2])
 	if err != nil {
 		return
@@ -213,26 +231,26 @@ func parseEvent(line string, eventLogChan chan<- EventLogEntry, mso string) (tim
 	}
 
 	if vodLogOn {
-		if ok, logEntry := checkAndLogForVodActivity(eventCode, timestamp, deviceId, clickString, mso); ok == true {
+		if ok, logEntry := checkAndLogForVodActivity(eventCode, timestamp, received, deviceId, clickString, mso); ok == true {
 			eventLogChan <- logEntry
 		}
 	} else if eventSequenceLogOnly {
-		eventLogChan <- EventLogEntry{timestamp, deviceId, eventCode, mso}
+		eventLogChan <- EventLogEntry{timestamp, received, deviceId, eventCode, mso}
 	}
 	return
 }
 
-func checkAndLogForVodActivity(eventCode string, timestamp time.Time, deviceId string, clickString string, mso string) (bool, EventLogEntry) {
+func checkAndLogForVodActivity(eventCode string, timestamp time.Time, received string, deviceId string, clickString string, mso string) (bool, EventLogEntry) {
 	switch eventCode {
 	case "`G`VOD Category": // "47": // G
-		return true, EventLogEntry{timestamp, deviceId, eventCode, mso}
+		return true, EventLogEntry{timestamp, received, deviceId, eventCode, mso}
 	case "`I`Info Screen": // "49": // I
 		if convertToString(clickString[10:12]) == "V" {
-			return true, EventLogEntry{timestamp, deviceId, eventCode + " / Type V", mso}
+			return true, EventLogEntry{timestamp, received, deviceId, eventCode + " / Type V", mso}
 		}
 	case "`V`Video Playback Session (non- OCAP)": // "56": // V
 		if convertToString(clickString[26:28]) == "V" {
-			return true, EventLogEntry{timestamp, deviceId, eventCode + " / Source V", mso}
+			return true, EventLogEntry{timestamp, received, deviceId, eventCode + " / Source V", mso}
 		}
 	default:
 		return false, EventLogEntry{}
@@ -242,6 +260,7 @@ func checkAndLogForVodActivity(eventCode string, timestamp time.Time, deviceId s
 
 type EventLogEntry struct {
 	timestamp time.Time
+	received  string
 	deviceId  string
 	eventcode string
 	mso       string
@@ -475,8 +494,8 @@ func printAllEvents(eventsLog OrderedVodLogList) {
 
 		w := bufio.NewWriter(file)
 		for _, event := range eventsLog {
-			fmt.Fprintf(w, "%v, %v, %v, %v\n",
-				event.timestamp, event.deviceId, event.eventcode, event.mso)
+			fmt.Fprintf(w, "%v, %v, %v, %v, %v\n",
+				event.timestamp, event.received, event.deviceId, event.eventcode, event.mso)
 		}
 		// Closing the file
 		w.Flush()
@@ -518,7 +537,7 @@ func printVodLogEntries(vodLog OrderedVodLogList) {
 			}
 
 			fmt.Fprintf(w, "%v, %v, %v\n",
-				vodEntry.timestamp, vodEntry.deviceId, vodEntry.eventcode, vodEntry.mso)
+				vodEntry.timestamp, vodEntry.received, vodEntry.deviceId, vodEntry.eventcode, vodEntry.mso)
 		}
 		// Closing the last file
 		w.Flush()
