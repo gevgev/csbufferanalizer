@@ -12,6 +12,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -30,6 +32,7 @@ var (
 	cummulativePrimetimeOnly bool
 	vodLogOn                 bool
 	eventSequenceLogOnly     bool
+	maxEventsPerFile         int
 	appName                  string
 )
 
@@ -40,6 +43,7 @@ const (
 	// iGuide R31 buff size
 	BuffWaterMarkSize = 750
 	rawExt            = "raw"
+	MAXEVENTLOGSIZE   = 100000
 )
 
 func init() {
@@ -56,6 +60,7 @@ func init() {
 	flagCombinedPrimetime := flag.Bool("PC", false, "`Cumulative Primetime`: 8pm-11pm events only cummulative single file")
 	flagVod := flag.Bool("VOD", false, "Create the log(s) for `VOD` activity")
 	flagEventSequenceLogOnly := flag.Bool("L", false, "Events sequence `log`")
+	flagMaxEventsPerFile := flag.Int("M", MAXEVENTLOGSIZE, "Max entries per event log csv file")
 
 	flag.Parse()
 	if flag.Parsed() {
@@ -72,6 +77,7 @@ func init() {
 		cummulativePrimetimeOnly = *flagCombinedPrimetime
 		vodLogOn = *flagVod
 		eventSequenceLogOnly = *flagEventSequenceLogOnly
+		maxEventsPerFile = *flagMaxEventsPerFile
 
 		appName = os.Args[0]
 		if inFileName == "" && dirName == "" && len(os.Args) == 2 {
@@ -367,6 +373,7 @@ func msoName(fileName string) string {
 func main() {
 	startTime := time.Now()
 	rand.Seed(int64(startTime.Second()))
+	var wg sync.WaitGroup
 
 	eventLogChan := make(chan EventLogEntry)
 	var vodLog OrderedVodLogList
@@ -376,6 +383,17 @@ func main() {
 			logEntry, more := <-eventLogChan
 			if more {
 				vodLog = append(vodLog, logEntry)
+				if eventSequenceLogOnly && len(vodLog) == maxEventsPerFile {
+					// We have reached max log size
+					// Save what we have and start over with new one
+					logToSave := vodLog
+					vodLog = OrderedVodLogList{}
+					wg.Add(1)
+					go func() {
+						printAllEvents(logToSave)
+						wg.Done()
+					}()
+				}
 			} else {
 				return
 			}
@@ -456,6 +474,7 @@ func main() {
 	close(eventLogChan)
 
 	if !eventSequenceLogOnly {
+		wg.Wait()
 		printOutputFile(packages)
 	}
 
@@ -483,6 +502,21 @@ func main() {
 	fmt.Printf("Processed %d files in %v\n", len(files), time.Since(startTime))
 }
 
+var (
+	fileCounter uint64 = 0
+	mutex           = &sync.Mutex{}
+)
+
+func ensureFileName() string {
+	mutex.Lock()
+	fileName := fmt.Sprintf("events-%s-%04d.csv", 
+		time.Now().Format("01-02-2006"),fileCounter)
+	mutex.Unlock()
+
+	atomic.AddUint64(&fileCounter, 1)
+	return fileName
+}
+
 func printAllEvents(eventsLog OrderedVodLogList) {
 
 	if len(eventsLog) == 0 {
@@ -491,7 +525,9 @@ func printAllEvents(eventsLog OrderedVodLogList) {
 		sort.Sort(eventsLog)
 		// Now save this to a a single events log file
 
-		file, err := os.Create("eventsLog-" + time.Now().Format("01 02 2006_15 04 05") + ".csv")
+		filename := ensureFileName()
+
+		file, err := os.Create(filename)
 		if err != nil {
 			fmt.Println(err)
 		}
