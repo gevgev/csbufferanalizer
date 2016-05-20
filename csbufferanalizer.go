@@ -379,15 +379,21 @@ func main() {
 	var vodLog OrderedVodLogList
 
 	go func() {
+		wg.Add(1)
 		for {
 			logEntry, more := <-eventLogChan
 			if more {
+				mutex.Lock()
 				vodLog = append(vodLog, logEntry)
+				mutex.Unlock()
+
 				if eventSequenceLogOnly && len(vodLog) == maxEventsPerFile {
 					// We have reached max log size
 					// Save what we have and start over with new one
+					mutex.Lock()
 					logToSave := vodLog
 					vodLog = OrderedVodLogList{}
+					mutex.Unlock()
 					wg.Add(1)
 					go func() {
 						printAllEvents(logToSave)
@@ -395,6 +401,7 @@ func main() {
 					}()
 				}
 			} else {
+				wg.Done()
 				return
 			}
 		}
@@ -473,8 +480,9 @@ func main() {
 	// closing the eventLogChannel
 	close(eventLogChan)
 
+	wg.Wait()
+
 	if !eventSequenceLogOnly {
-		wg.Wait()
 		printOutputFile(packages)
 	}
 
@@ -522,7 +530,9 @@ func printAllEvents(eventsLog OrderedVodLogList) {
 	if len(eventsLog) == 0 {
 		fmt.Println("No events")
 	} else {
+		mutex.Lock()
 		sort.Sort(eventsLog)
+		mutex.Unlock()
 		// Now save this to a a single events log file
 
 		filename := ensureFileName()
