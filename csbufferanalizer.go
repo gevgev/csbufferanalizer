@@ -43,7 +43,7 @@ const (
 	// iGuide R31 buff size
 	BuffWaterMarkSize = 750
 	rawExt            = "raw"
-	MAXEVENTLOGSIZE   = 100000
+	MAXEVENTLOGSIZE   = 250000
 )
 
 func init() {
@@ -504,13 +504,13 @@ func main() {
 
 var (
 	fileCounter uint64 = 0
-	mutex           = &sync.Mutex{}
+	mutex              = &sync.Mutex{}
 )
 
 func ensureFileName() string {
 	mutex.Lock()
-	fileName := fmt.Sprintf("events-%s-%04d.csv", 
-		time.Now().Format("01-02-2006"),fileCounter)
+	fileName := fmt.Sprintf("events-%s-%04d.csv",
+		time.Now().Format("01-02-2006"), fileCounter)
 	mutex.Unlock()
 
 	atomic.AddUint64(&fileCounter, 1)
