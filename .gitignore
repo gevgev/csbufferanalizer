@@ -11,3 +11,4 @@ test/*.*
 *.csv
 *.rpt
 *.xlsx
+SQL/*.*
