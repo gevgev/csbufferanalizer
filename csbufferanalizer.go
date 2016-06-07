@@ -586,7 +586,7 @@ func printVodLogEntries(vodLog OrderedVodLogList) {
 				w = bufio.NewWriter(file)
 			}
 
-			fmt.Fprintf(w, "%v, %v, %v\n",
+			fmt.Fprintf(w, "%v, %v, %v, %v, %v\n",
 				vodEntry.timestamp, vodEntry.received, vodEntry.deviceId, vodEntry.eventcode, vodEntry.mso)
 		}
 		// Closing the last file
